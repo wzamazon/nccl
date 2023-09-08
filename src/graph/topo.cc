@@ -591,6 +591,7 @@ static ncclResult_t xmlInitAttrFloat(struct ncclXmlNode* node, const char* attrN
   return ncclSuccess;
 }
 
+double dbtime();
 
 ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system) {
   struct ncclXml* xml;
@@ -610,6 +611,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
     NCCLCHECK(xmlSetAttrInt(top, "version", NCCL_TOPO_XML_VERSION));
   }
 
+  double bgntime = dbtime();
   // Auto-detect GPUs if needed
   for (int r=0; r<comm->nRanks; r++) {
     if (comm->peerInfo[r].hostHash == comm->peerInfo[comm->rank].hostHash) {
@@ -623,6 +625,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
       NCCLCHECK(xmlInitAttrInt(node, "gdr", comm->peerInfo[r].gdrSupport));
     }
   }
+  fprintf(stderr, "\t\ttopoFillGpu.\tcalled: %f elapsed: %f\n", bgntime, dbtime() - bgntime);
   // Auto-detect NICs if needed. net/collnet share the same xml/graph nodes,
   // so we start with collnet so that it has precedence.
   int netDevCount = 0;
