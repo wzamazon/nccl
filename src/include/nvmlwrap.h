@@ -206,4 +206,20 @@ ncclResult_t ncclNvmlDeviceGetCudaComputeCapability(nvmlDevice_t device, int* ma
 ncclResult_t ncclNvmlDeviceGetP2PStatus(nvmlDevice_t device1, nvmlDevice_t device2, nvmlGpuP2PCapsIndex_t p2pIndex, nvmlGpuP2PStatus_t* p2pStatus);
 ncclResult_t ncclNvmlDeviceGetFieldValues(nvmlDevice_t device, int valuesCount, nvmlFieldValue_t *values);
 
+
+#define NCCL_NVML_DEVICE_MAX_NVLINK_COUNT 18
+typedef char ncclNvmlDeviceNVLinkRemoteBusId[NCCL_NVML_DEVICE_MAX_NVLINK_COUNT][NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE];
+
+inline int ncclNvmlDeviceGetSM(nvmlDevice_t nvmlDev) {
+  int cudaMajor = 0, cudaMinor = 0;
+  ncclNvmlDeviceGetCudaComputeCapability(nvmlDev, &cudaMajor, &cudaMinor);
+  return cudaMajor*10+cudaMinor;
+}
+
+inline int ncclGetMaxNVLinks(int sm) {
+  return (sm < 60) ? 0 : (sm < 70) ? 4 : (sm < 80) ? 6 : (sm < 90) ? 12 : 18;
+}
+
+const ncclNvmlDeviceNVLinkRemoteBusId& ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDevice_t nvmlDev);
+
 #endif // End include guard
