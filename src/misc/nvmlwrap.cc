@@ -7,7 +7,7 @@
 #include "nvmlwrap.h"
 #include "checks.h"
 #include "debug.h"
-
+#include <unordered_map>
 #include <initializer_list>
 #include <memory>
 #include <mutex>
@@ -268,4 +268,52 @@ ncclResult_t ncclNvmlDeviceGetFieldValues(nvmlDevice_t device, int valuesCount, 
   std::lock_guard<std::mutex> locked(lock);
   NVMLTRY(nvmlDeviceGetFieldValues, device, valuesCount, values);
   return ncclSuccess;
+}
+
+const ncclNvmlDeviceNVLinkRemoteBusId& ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDevice_t nvmlDev) {
+  static std::unordered_map<nvmlDevice_t, ncclNvmlDeviceNVLinkRemoteBusId> busIdCache;
+
+  auto itr = busIdCache.find(nvmlDev);
+  if (itr != busIdCache.end()) {
+    return itr->second;
+  }
+
+  int sm = ncclNvmlDeviceGetSM(nvmlDev);
+  int maxNvLinks = ncclGetMaxNVLinks(sm);
+
+  auto& busId = busIdCache[nvmlDev];
+
+  for (int l=0; l < maxNvLinks; ++l) {
+    busId[l][0] = '\0';
+
+    unsigned int canP2P;
+    if ((ncclNvmlDeviceGetNvLinkCapability(nvmlDev, l, NVML_NVLINK_CAP_P2P_SUPPORTED, &canP2P) != ncclSuccess) || !canP2P)
+      continue;
+
+    nvmlEnableState_t isActive = NVML_FEATURE_DISABLED;
+    // Make sure the Nvlink is up. The previous call should have trained the link.
+#if CUDART_VERSION >= 11080
+    if (sm >= 90) {
+      nvmlFieldValue_t fv;
+      fv.fieldId = NVML_FI_DEV_NVLINK_GET_STATE;
+      fv.scopeId = l;
+      // fv.value will contain NV_FEATURE_ENABLED or NV_FEATURE_DISABLED
+      if ((ncclNvmlDeviceGetFieldValues(nvmlDev, 1, &fv) == ncclSuccess) && (fv.nvmlReturn == NVML_SUCCESS))
+        isActive = (nvmlEnableState_t) fv.value.uiVal;
+      } else /* FALLTHRU to GetNvLinkState if before SM90 */
+#endif
+      {
+        (void) ncclNvmlDeviceGetNvLinkState(nvmlDev, l, &isActive);
+      }
+
+      if (isActive != NVML_FEATURE_ENABLED) continue;
+
+      nvmlPciInfo_t remotePciInfo;
+      if (ncclNvmlDeviceGetNvLinkRemotePciInfo(nvmlDev, l, &remotePciInfo) != ncclSuccess)
+        continue;
+
+      strncpy(busId[l], remotePciInfo.busId, NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE);
+  }
+
+  return busId;
 }
