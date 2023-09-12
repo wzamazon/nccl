@@ -270,13 +270,16 @@ ncclResult_t ncclNvmlDeviceGetFieldValues(nvmlDevice_t device, int valuesCount, 
   return ncclSuccess;
 }
 
-const ncclNvmlDeviceNVLinkRemoteBusId& ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDevice_t nvmlDev, int sm, int maxNvLinks) {
+const ncclNvmlDeviceNVLinkRemoteBusId& ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDevice_t nvmlDev) {
   static std::unordered_map<nvmlDevice_t, ncclNvmlDeviceNVLinkRemoteBusId> busIdCache;
 
   auto itr = busIdCache.find(nvmlDev);
   if (itr != busIdCache.end()) {
     return itr->second;
   }
+
+  int sm = ncclNvmlDeviceGetSM(nvmlDev);
+  int maxNvLinks = ncclGetMaxNVLinks(sm);
 
   auto& busId = busIdCache[nvmlDev];
 

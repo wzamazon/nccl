@@ -633,14 +633,14 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
   NCCLCHECK(xmlGetSub(gpuNode, "nvlink", &nvlNode));
   if (nvlNode == NULL) {
     // NVML NVLink detection
-    int maxNvLinks = (sm < 60) ? 0 : (sm < 70) ? 4 : (sm < 80) ? 6 : (sm < 90) ? 12 : 18;
+    int maxNvLinks = ncclGetMaxNVLinks(sm);
 
     if (maxNvLinks > 0 && nvmlDev == NULL) {
       WARN("No NVML device handle. Skipping nvlink detection.");
       maxNvLinks = 0;
     }
 
-    auto& deviceNvlinkRemoteBusId = ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDev,sm, maxNvLinks);
+    auto& deviceNvlinkRemoteBusId = ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDev);
     for (int l=0; l<maxNvLinks; ++l) {
       const char *p = deviceNvlinkRemoteBusId[l];
       if (p[0] == '\0') continue;
