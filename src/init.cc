@@ -325,6 +325,13 @@ static ncclResult_t commAlloc(ncclComm_t* comret, int ndev, int rank) {
 
   cudaGetDevice(&comm->cudaDev);
   NCCLCHECK(getBusId(comm->cudaDev, &comm->busId));
+
+  nvmlDevice_t nvmlDev;
+  char busId[NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE];
+  NCCLCHECK(int64ToBusId(comm->busId, busId));
+  NCCLCHECK(ncclNvmlDeviceGetHandleByPciBusId(busId, &nvmlDev));
+  memcpy(&comm->nvmlDevNVLinkRemoteBusId, &ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDev), sizeof(comm->nvmlDevNVLinkRemoteBusId));
+
   comm->compCap = ncclCudaCompCap();
   TRACE(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d busId %lx compCap %d", comm, rank, ndev, comm->cudaDev, comm->busId, comm->compCap);
 
@@ -453,6 +460,7 @@ static ncclResult_t fillInfo(struct ncclComm* comm, struct ncclPeerInfo* info, u
   NCCLCHECK(ncclGpuGdrSupport(comm, &info->gdrSupport));
   info->comm = comm;
   info->cudaCompCap = ncclCudaCompCap();
+  memcpy(&info->nvmlDevNVLinkRemoteBusId, comm->nvmlDevNVLinkRemoteBusId, sizeof(info->nvmlDevNVLinkRemoteBusId));
   return ncclSuccess;
 }
 

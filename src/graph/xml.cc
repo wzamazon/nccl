@@ -587,7 +587,7 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
   return ncclSuccess;
 }
 
-ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvmlDev, struct ncclXml* xml, struct ncclXmlNode** gpuNodeRet) {
+ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvmlDev, ncclNvmlDeviceNVLinkRemoteBusId *remoteBusId, struct ncclXml* xml, struct ncclXmlNode** gpuNodeRet) {
   struct ncclXmlNode* gpuNode = NULL;
   NCCLCHECK(xmlGetSub(pciNode, "gpu", &gpuNode));
   if (gpuNode == NULL) NCCLCHECK(xmlAddNode(xml, pciNode, "gpu", &gpuNode));
@@ -635,9 +635,8 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
       maxNvLinks = 0;
     }
 
-    auto& deviceNvlinkRemoteBusId = ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDev);
     for (int l=0; l<maxNvLinks; ++l) {
-      const char *p = deviceNvlinkRemoteBusId[l];
+      const char *p = (*remoteBusId)[l];
       if (p[0] == '\0') continue;
 
       // Make a lower case copy of the bus ID for calling ncclDeviceType
@@ -686,14 +685,14 @@ ncclResult_t ncclTopoGetXmlFromGpu(struct ncclXmlNode* pciNode, nvmlDevice_t nvm
   return ncclSuccess;
 }
 
-ncclResult_t ncclTopoFillGpu(struct ncclXml* xml, const char* busId, struct ncclXmlNode** gpuNode) {
+ncclResult_t ncclTopoFillGpu(struct ncclXml* xml, const char* busId, ncclNvmlDeviceNVLinkRemoteBusId* remoteBusId, struct ncclXmlNode** gpuNode) {
   struct ncclXmlNode* node;
   NCCLCHECK(ncclTopoGetPciNode(xml, busId, &node));
   NCCLCHECK(xmlSetAttrIfUnset(node, "class", "0x03"));
   NCCLCHECK(ncclTopoGetXmlFromSys(node, xml));
   nvmlDevice_t nvmlDev = NULL;
   if (ncclNvmlDeviceGetHandleByPciBusId(busId, &nvmlDev) != ncclSuccess) nvmlDev = NULL;
-  NCCLCHECK(ncclTopoGetXmlFromGpu(node, nvmlDev, xml, gpuNode));
+  NCCLCHECK(ncclTopoGetXmlFromGpu(node, nvmlDev, remoteBusId, xml, gpuNode));
   return ncclSuccess;
 }
 
