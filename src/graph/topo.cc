@@ -618,7 +618,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
       char busId[NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE];
       NCCLCHECK(int64ToBusId(comm->peerInfo[r].busId, busId));
       struct ncclXmlNode* node;
-      NCCLCHECK(ncclTopoFillGpu(xml, busId, &node));
+      NCCLCHECK(ncclTopoFillGpu(xml, busId, &comm->peerInfo[r].nvmlDevNVLinkRemoteBusId, &node));
       if (node == NULL) continue;
       NCCLCHECK(xmlSetAttrInt(node, "keep", 1));
       NCCLCHECK(xmlSetAttrInt(node, "rank", r));

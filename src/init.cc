@@ -333,6 +333,7 @@ static ncclResult_t commAlloc(struct ncclComm* comm, struct ncclComm* parent, in
   NCCLCHECK(int64ToBusId(comm->busId, busId));
   NCCLCHECK(ncclNvmlDeviceGetHandleByPciBusId(busId, &nvmlDev));
   NCCLCHECK(ncclNvmlDeviceGetIndex(nvmlDev, (unsigned int*)&comm->nvmlDev));
+  memcpy(&comm->nvmlDevNVLinkRemoteBusId, &ncclNvmlGetDeviceNVLinkRemoteBusId(nvmlDev), sizeof(comm->nvmlDevNVLinkRemoteBusId));
 
   comm->compCap = ncclCudaCompCap();
   TRACE(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d busId %lx compCap %d", comm, rank, ndev, comm->cudaDev, comm->busId, comm->compCap);
@@ -484,6 +485,8 @@ static ncclResult_t fillInfo(struct ncclComm* comm, struct ncclPeerInfo* info, u
   NCCLCHECK(ncclGpuGdrSupport(comm, &info->gdrSupport));
   info->comm = comm;
   info->cudaCompCap = comm->minCompCap = comm->maxCompCap = comm->compCap;
+  memcpy(&info->nvmlDevNVLinkRemoteBusId, comm->nvmlDevNVLinkRemoteBusId, sizeof(info->nvmlDevNVLinkRemoteBusId));
+
   return ncclSuccess;
 }
 
