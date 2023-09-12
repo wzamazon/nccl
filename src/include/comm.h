@@ -218,6 +218,7 @@ struct ncclComm {
   int nRanks;  // number of GPUs in communicator
   int cudaDev; // my cuda device index
   int nvmlDev; // my nvml device index
+  ncclNvmlDeviceNVLinkRemoteBusId nvmlDevNVLinkRemoteBusId;
   int compCap; // compute capability of the GPU
   int minCompCap, maxCompCap; // min/max compute capability in the communicator
   int64_t busId;   // my PCI bus ID in int format
