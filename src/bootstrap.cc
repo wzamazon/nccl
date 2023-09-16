@@ -9,8 +9,10 @@
 #include "utils.h"
 #include "bootstrap.h"
 #include "net.h"
+#include <cassert>
 #include <unistd.h>
 #include <sys/types.h>
+#include <netdb.h>
 #include "proxy.h"
 
 struct bootstrapRootArgs {
@@ -225,26 +227,16 @@ struct bootstrapState {
   volatile uint32_t *abortFlag;
 };
 
-ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* comm) {
-  int rank = comm->rank;
-  int nranks = comm->nRanks;
-  struct bootstrapState* state;
-  struct ncclSocket* proxySocket;
+ncclResult_t bootstrapInitSocketsFromRoot(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
+{
   ncclSocketAddress nextAddr;
   struct ncclSocket sock, listenSockRoot;
   struct extInfo info = { 0 };
 
-  NCCLCHECK(ncclCalloc(&state, 1));
-  state->rank = rank;
-  state->nranks = nranks;
-  state->abortFlag = comm->abortFlag;
-  comm->bootstrap = state;
-  comm->magic = state->magic = handle->magic;
+  info.rank = state->rank;
+  info.nranks = state->nranks;
 
-  TRACE(NCCL_INIT, "rank %d nranks %d", rank, nranks);
 
-  info.rank = rank;
-  info.nranks = nranks;
   // Create socket for other ranks to contact me
   NCCLCHECK(ncclSocketInit(&state->listenSock, &bootstrapNetIfAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
   NCCLCHECK(ncclSocketListen(&state->listenSock));
@@ -256,8 +248,8 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   NCCLCHECK(ncclSocketGetAddr(&listenSockRoot, &info.extAddressListenRoot));
 
   // stagger connection times to avoid an overload of the root
-  if (nranks > 128) {
-    long msec = rank;
+  if (state->nranks > 128) {
+    long msec = state->rank;
     struct timespec tv;
     tv.tv_sec = msec / 1000;
     tv.tv_nsec = 1000000 * (msec % 1000);
@@ -285,9 +277,102 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
 
   // AllGather all listen handlers
-  NCCLCHECK(ncclCalloc(&state->peerCommAddresses, nranks));
-  NCCLCHECK(ncclSocketGetAddr(&state->listenSock, state->peerCommAddresses+rank));
+  NCCLCHECK(ncclCalloc(&state->peerCommAddresses, state->nranks));
+  NCCLCHECK(ncclSocketGetAddr(&state->listenSock, state->peerCommAddresses+state->rank));
   NCCLCHECK(bootstrapAllGather(state, state->peerCommAddresses, sizeof(union ncclSocketAddress)));
+  return ncclSuccess;
+}
+
+enum bootstrapSocketType {
+  bootstrapListenSocket,
+  bootstrapRingRecvSocket,
+};
+
+int findFirstHost(const char **hostList, int nranks, const char *host) {
+  for (int r=0; r < nranks; ++r) {
+    if (strcmp(hostList[r], host) == 0)
+      return r;
+  }
+
+  return -1;
+}
+
+ncclResult_t bootstrapGetListenSocketAddress(struct ncclComm *comm, int rank, ncclSocketAddress *sockAddr) {
+  assert(comm->config.hostList);
+
+  int hostHeadRank = findFirstHost(comm->config.hostList, comm->nRanks, comm->config.hostList[rank]);
+  if (hostHeadRank == -1)
+    return ncclInvalidArgument;
+
+  int port = comm->config.portBase + (rank - hostHeadRank);
+
+  struct addrinfo *addrInfo;
+  if (getaddrinfo(comm->config.hostList[rank], NULL, NULL, &addrInfo)!=0) {
+    return ncclInvalidArgument;
+  }
+
+  memcpy(&sockAddr->sa, addrInfo->ai_addr, addrInfo->ai_addrlen);
+
+  ncclResult_t ret = ncclSuccess;
+  if (addrInfo->ai_family == AF_INET) {
+    sockAddr->sin.sin_port = port;
+  } else if (addrInfo->ai_family == AF_INET6) {
+    sockAddr->sin6.sin6_port = port;
+  } else {
+    ret = ncclInvalidArgument;
+  }
+
+  freeaddrinfo(addrInfo);
+  return ret;
+}
+
+ncclResult_t bootstrapInitSocketsFromHostList(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
+{
+  ncclSocketAddress sockAddr;
+
+  // create socket for other ranks to contact me
+  bootstrapGetListenSocketAddress(comm, comm->rank, &sockAddr);
+  NCCLCHECK(ncclSocketInit(&state->listenSock, &sockAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
+  NCCLCHECK(ncclSocketListen(&state->listenSock));
+
+  NCCLCHECK(ncclCalloc(&state->peerCommAddresses, comm->nRanks));
+  for (int r=0; r < comm->nRanks; ++r) {
+    bootstrapGetListenSocketAddress(comm, r, &state->peerCommAddresses[r]);
+  }
+
+  // create socket for my prev rank in the ring to contact me
+  bootstrapGetListenSocketAddress(comm, comm->rank, &sockAddr);
+  // create socket to send data to "next" rank in the ring
+  int nextRank = (comm->rank + 1) % comm->nRanks;
+  NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
+  NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
+
+  // accept connection fron my "prev" rank in the ring
+  NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
+  NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
+  return ncclSuccess;
+}
+
+ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* comm) {
+  int rank = comm->rank;
+  int nranks = comm->nRanks;
+  struct bootstrapState* state;
+  struct ncclSocket* proxySocket;
+
+  NCCLCHECK(ncclCalloc(&state, 1));
+  state->rank = rank;
+  state->nranks = nranks;
+  state->abortFlag = comm->abortFlag;
+  comm->bootstrap = state;
+  comm->magic = state->magic = handle->magic;
+
+  TRACE(NCCL_INIT, "rank %d nranks %d", rank, nranks);
+
+  if (comm->config.hostList) {
+    NCCLCHECK(bootstrapInitSocketsFromHostList(handle, comm, state));
+  } else {
+    NCCLCHECK(bootstrapInitSocketsFromRoot(handle, comm, state));
+  }
 
   // Create the service proxy
   NCCLCHECK(ncclCalloc(&state->peerProxyAddresses, nranks));
