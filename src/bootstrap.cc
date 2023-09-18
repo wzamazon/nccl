@@ -315,9 +315,9 @@ ncclResult_t bootstrapGetListenSocketAddress(struct ncclComm *comm, int rank, nc
 
   ncclResult_t ret = ncclSuccess;
   if (addrInfo->ai_family == AF_INET) {
-    sockAddr->sin.sin_port = port;
+    sockAddr->sin.sin_port = htons(port);
   } else if (addrInfo->ai_family == AF_INET6) {
-    sockAddr->sin6.sin6_port = port;
+    sockAddr->sin6.sin6_port = htons(port);
   } else {
     ret = ncclInvalidArgument;
   }
@@ -328,26 +328,21 @@ ncclResult_t bootstrapGetListenSocketAddress(struct ncclComm *comm, int rank, nc
 
 ncclResult_t bootstrapInitSocketsFromHostList(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
 {
-  ncclSocketAddress sockAddr;
-
-  // create socket for other ranks to contact me
-  bootstrapGetListenSocketAddress(comm, comm->rank, &sockAddr);
-  NCCLCHECK(ncclSocketInit(&state->listenSock, &sockAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
-  NCCLCHECK(ncclSocketListen(&state->listenSock));
-
+  // deduce the lisening socket address of all ranks from hostList and portBase
   NCCLCHECK(ncclCalloc(&state->peerCommAddresses, comm->nRanks));
   for (int r=0; r < comm->nRanks; ++r) {
     bootstrapGetListenSocketAddress(comm, r, &state->peerCommAddresses[r]);
   }
 
-  // create socket for my prev rank in the ring to contact me
-  bootstrapGetListenSocketAddress(comm, comm->rank, &sockAddr);
-  // create socket to send data to "next" rank in the ring
+  // create my lisening socket so that others can contact me
+  NCCLCHECK(ncclSocketInit(&state->listenSock, &state->peerCommAddresses[comm->rank], comm->magic, ncclSocketTypeBootstrap, NULL));
+  NCCLCHECK(ncclSocketListen(&state->listenSock));
+
   int nextRank = (comm->rank + 1) % comm->nRanks;
-  NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
+  NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
 
-  // accept connection fron my "prev" rank in the ring
+  // accept connection from my "prev" rank in the ring
   NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
   NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
   return ncclSuccess;
