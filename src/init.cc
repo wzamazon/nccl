@@ -802,7 +802,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   NCCLCHECKGOTO(fillInfo(comm, comm->peerInfo+rank, comm->commHash), ret, fail);
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, comm->peerInfo, sizeof(struct ncclPeerInfo)), ret, fail);
-  fprintf(stderr, "\t\tAllGather1st\tcalled: %f elapsed: %f\n", bgntime, dbtime() - bgntime);
+  fprintf(stderr, "\t\tAllGather1st\tcalled: %f elapsed: %f blocksize: %lu\n", bgntime, dbtime() - bgntime, sizeof(struct ncclPeerInfo));
 
   for (int i = 0; i < nranks; i++) {
     if ((i != rank) && (comm->peerInfo[i].hostHash == comm->peerInfo[rank].hostHash) && (comm->peerInfo[i].busId == comm->peerInfo[rank].busId)) {
@@ -951,7 +951,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, allGather3Data, sizeof(*allGather3Data)), ret, fail);
-  fprintf(stderr, "\t\tAllGather2nd\tcalled: %f elapsed: %f\n", bgntime, dbtime() - bgntime);
+  fprintf(stderr, "\t\tAllGather2nd\tcalled: %f elapsed: %f blocksize: %lu\n", bgntime, dbtime() - bgntime, sizeof(*allGather3Data));
 
   // Determine nNodes, firstRanks, ...
   NCCLCHECKGOTO(ncclCalloc(&nodesFirstRank, nranks), ret, fail);
