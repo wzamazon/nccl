@@ -18,6 +18,8 @@
 
 using std::vector;
 
+bool bootstrapUseTree = false;
+
 struct bootstrapRootArgs {
   struct ncclSocket* listenSock;
   uint64_t magic;
@@ -239,6 +241,31 @@ struct bootstrapState {
   volatile uint32_t *abortFlag;
 };
 
+enum bootstrapSocketType {
+  bootstrapListenSocket,
+  bootstrapRingRecvSocket,
+};
+
+void bootstrapInitBmtree(struct ncclComm* comm, struct bootstrapTree *tree)
+{
+  int rank = comm->rank;
+  int size = comm->nRanks;
+  int mask = 1;
+  int remote;
+
+  while (mask < size) {
+    remote = rank ^ mask;
+    if (remote < rank) {
+        tree->parent = remote;
+        break;
+    } else if (remote < size) {
+        tree->children.push_back(remote);
+    }
+    mask <<= 1;
+  }
+}
+
+
 ncclResult_t bootstrapInitSocketsFromRoot(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
 {
   ncclSocketAddress nextAddr;
@@ -282,41 +309,21 @@ ncclResult_t bootstrapInitSocketsFromRoot(struct ncclBootstrapHandle* handle, st
   NCCLCHECK(ncclSocketClose(&sock));
   NCCLCHECK(ncclSocketClose(&listenSockRoot));
 
-  NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
-  NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
-  // Accept the connect request from the previous rank in the AllGather ring
-  NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
-  NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
+  if (bootstrapUseTree) {
+    throw std::runtime_error("Error: cannot use tree when init from root");
+  } else {
+    NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
+    NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
+    // Accept the connect request from the previous rank in the AllGather ring
+    NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
+    NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
+  }
 
   // AllGather all listen handlers
   NCCLCHECK(ncclCalloc(&state->peerCommAddresses, state->nranks));
   NCCLCHECK(ncclSocketGetAddr(&state->listenSock, state->peerCommAddresses+state->rank));
   NCCLCHECK(bootstrapAllGather(state, state->peerCommAddresses, sizeof(union ncclSocketAddress)));
   return ncclSuccess;
-}
-
-enum bootstrapSocketType {
-  bootstrapListenSocket,
-  bootstrapRingRecvSocket,
-};
-
-void bootstrapInitBmtree(struct ncclComm* comm, struct bootstrapTree *tree)
-{
-  int rank = comm->rank;
-  int size = comm->nRanks;
-  int mask = 1;
-  int remote;
-
-  while (mask < size) {
-    remote = rank ^ mask;
-    if (remote < rank) {
-        tree->parent = remote;
-        break;
-    } else if (remote < size) {
-        tree->children.push_back(remote);
-    }
-    mask <<= 1;
-  }
 }
 
 ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
@@ -333,16 +340,15 @@ ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle
   NCCLCHECK(ncclSocketInit(&state->listenSock, &state->peerCommAddresses[comm->rank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketListen(&state->listenSock));
 
-  if (true) {
-    bootstrapInitBmtree(comm, &state->tree);
-
+  if (bootstrapUseTree) {
     int nchild = state->tree.children.size();
     state->treeChildrenSockets.resize(nchild);
     if (nchild > 0) {
       // connect to my children
       for (int i = 0; i < nchild; ++i) {
-          NCCLCHECK(ncclSocketInit(&state->treeChildrenSockets[i], &state->peerCommAddresses[state->tree.parent], comm->magic, ncclSocketTypeBootstrap, NULL));
-          NCCLCHECK(ncclSocketConnect(&state->treeChildrenSockets[i]));
+        int child = state->tree.children[i];
+        NCCLCHECK(ncclSocketInit(&state->treeChildrenSockets[i], &state->peerCommAddresses[child], comm->magic, ncclSocketTypeBootstrap, NULL));
+        NCCLCHECK(ncclSocketConnect(&state->treeChildrenSockets[i]));
       }
     }
 
@@ -381,7 +387,9 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
 
   TRACE(NCCL_INIT, "rank %d nranks %d", rank, nranks);
 
+  bootstrapInitBmtree(comm, &state->tree);
   if (comm->config.connData) {
+    bootstrapUseTree = true;
     NCCLCHECK(bootstrapInitSocketsFromConnData(handle, comm, state));
   } else {
     NCCLCHECK(bootstrapInitSocketsFromRoot(handle, comm, state));
@@ -493,6 +501,7 @@ ncclResult_t bootstrapAllGatherTree(void* commState, void* allData, int size) {
   char* data = (char*)allData;
 
   int nchild = state->tree.children.size();
+  //fprintf(stderr, "Gather rank=%d parent=%d nchild=%d\n", state->rank, state->tree.parent, nchild);
   if (nchild > 0) {
     for (int i = 0; i < nchild; ++i) {
       char* childDataBuff = data + state->tree.children[i] * size;
@@ -500,14 +509,17 @@ ncclResult_t bootstrapAllGatherTree(void* commState, void* allData, int size) {
       if (state->tree.children[i] * size + childDataSize > state->nranks * size) {
         childDataSize = state->nranks * size - state->tree.children[i] * size;
       }
+
+      //fprintf(stderr, "Gather recving %d bytes from rank %d\n", childDataSize, state->tree.children[i]);
       ncclSocketRecv(&state->treeChildrenSockets[i], childDataBuff, childDataSize);
     }
   }
 
-  /* root is always 0 */
-  if (state->rank != 0) {
+  int root = 0;
+  if (state->rank != root) {
       char* selfDataBuff = data + state->rank * size;
       int selfDataSize = size << nchild;
+      //fprintf(stderr, "Gather sending %d bytes to rank %d\n", selfDataSize, state->tree.parent);
       ncclSocketSend(&state->treeParentSocket, selfDataBuff, selfDataSize);
   }
 
@@ -545,11 +557,15 @@ ncclResult_t bootstrapAllGatherRing(void* commState, void* allData, int size) {
 }
 
 ncclResult_t bootstrapAllGather(void* commState, void* allData, int size) {
-  if (true) {
-    return bootstrapAllGatherTree(commState, allData, size);
+  ncclResult_t res;
+
+  if (bootstrapUseTree) {
+    res = bootstrapAllGatherTree(commState, allData, size);
+  } else {
+    res = bootstrapAllGatherRing(commState, allData, size);
   }
 
-  return bootstrapAllGatherRing(commState, allData, size);
+  return res;
 }
 
 ncclResult_t bootstrapSend(void* commState, int peer, int tag, void* data, int size) {
@@ -724,7 +740,7 @@ ncclResult_t bootstrapClose(void* commState) {
   }
 
   NCCLCHECK(ncclSocketClose(&state->listenSock));
-  if (true) {
+  if (bootstrapUseTree) {
     int nchild = state->tree.children.size();
     for (int i = 0; i < nchild; ++i) {
       NCCLCHECK(ncclSocketClose(&state->treeChildrenSockets[i]));
