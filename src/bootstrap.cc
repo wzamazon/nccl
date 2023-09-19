@@ -288,41 +288,27 @@ enum bootstrapSocketType {
   bootstrapRingRecvSocket,
 };
 
-double dbtime();
-
 ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
 {
   assert(comm->config.connData);
 
-  static int printed = 0;
-  if (!printed) {
-    fprintf(stderr, "bootstrapping using host list\n");
-    printed = 1;
-  }
-
-  double t0 = dbtime();
   // deduce the lisening socket address of all ranks from connData
   NCCLCHECK(ncclCalloc(&state->peerCommAddresses, comm->nRanks));
   for (int r=0; r < comm->nRanks; ++r) {
     memcpy(&state->peerCommAddresses[r].sa, comm->config.connData[r], sizeof(struct sockaddr));
   }
 
-  double t1 = dbtime();
   // create my lisening socket so that others can contact me
   NCCLCHECK(ncclSocketInit(&state->listenSock, &state->peerCommAddresses[comm->rank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketListen(&state->listenSock));
 
-  double t2 = dbtime();
   int nextRank = (comm->rank + 1) % comm->nRanks;
   NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
 
-  double t3 = dbtime();
   // accept connection from my "prev" rank in the ring
   NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
   NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
-  double t4 = dbtime();
-  fprintf(stderr, "\t\tbootstrapInitSocketsFromConnData. total: %f part1: %f part2: %f part3: %f part4: %f\n", t4 - t0, t1 - t0, t2 - t1, t3 - t2, t4 - t3);
   return ncclSuccess;
 }
 
