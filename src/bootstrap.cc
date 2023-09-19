@@ -487,29 +487,35 @@ fail:
   goto exit;
 }
 
+double dbtime();
+
 ncclResult_t bootstrapBcastTree(void* commState, void* data, int size) {
   struct bootstrapState* state = (struct bootstrapState*)commState;
 
   int nchild = state->tree.children.size();
   if (state->rank != 0) {
+      double bgntime = dbtime();
       ncclSocketRecv(&state->treeParentSocket, data, size);
+      fprintf(stderr, "\t\t\tbcast recv %d bytes from %d elapsed: %f called: %f\n", size, state->tree.parent, dbtime() - bgntime, bgntime);
   }
 
   if (nchild > 0) {
     for (int i = 0; i < nchild; ++i) {
+      double bgntime = dbtime();
       ncclSocketSend(&state->treeChildrenSockets[i], data, size);
+      fprintf(stderr, "\t\t\tbcast send %d bytes from %d elapsed: %f called: %f\n", size, state->tree.children[i], dbtime() - bgntime, bgntime);
     }
   }
 
   return ncclSuccess;
 }
 
+
 ncclResult_t bootstrapAllGatherTree(void* commState, void* allData, int size) {
   struct bootstrapState* state = (struct bootstrapState*)commState;
   char* data = (char*)allData;
 
   int nchild = state->tree.children.size();
-  //fprintf(stderr, "Gather rank=%d parent=%d nchild=%d\n", state->rank, state->tree.parent, nchild);
   if (nchild > 0) {
     for (int i = 0; i < nchild; ++i) {
       char* childDataBuff = data + state->tree.children[i] * size;
@@ -518,8 +524,9 @@ ncclResult_t bootstrapAllGatherTree(void* commState, void* allData, int size) {
         childDataSize = state->nranks * size - state->tree.children[i] * size;
       }
 
-      //fprintf(stderr, "Gather recving %d bytes from rank %d\n", childDataSize, state->tree.children[i]);
+      double bgntime = dbtime();
       ncclSocketRecv(&state->treeChildrenSockets[i], childDataBuff, childDataSize);
+      fprintf(stderr, "\t\t\tgather recv %d bytes from %d elapsed: %f called: %f\n", childDataSize, state->tree.children[i], dbtime() - bgntime, bgntime);
     }
   }
 
@@ -527,11 +534,14 @@ ncclResult_t bootstrapAllGatherTree(void* commState, void* allData, int size) {
   if (state->rank != root) {
       char* selfDataBuff = data + state->rank * size;
       int selfDataSize = size << nchild;
-      //fprintf(stderr, "Gather sending %d bytes to rank %d\n", selfDataSize, state->tree.parent);
+
+      double bgntime = dbtime();
       ncclSocketSend(&state->treeParentSocket, selfDataBuff, selfDataSize);
+      fprintf(stderr, "\t\t\tgather send %d bytes to %d called: %f elapsed: %f\n", selfDataSize, state->tree.parent, bgntime, dbtime() - bgntime);
   }
 
   NCCLCHECK(bootstrapBcastTree(commState, allData, size * state->nranks));
+
   return ncclSuccess;
 }
 
