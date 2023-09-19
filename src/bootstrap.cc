@@ -431,18 +431,21 @@ ncclResult_t bootstrapAllGather(void* commState, void* allData, int size) {
 
   TRACE(NCCL_INIT, "rank %d nranks %d size %d", rank, nranks, size);
 
-  /* Simple ring based AllGather
-   * At each step i receive data from (rank-i-1) from left
-   * and send previous step's data from (rank-i) to right
-   */
-  for (int i=0; i<nranks-1; i++) {
-    size_t rslice = (rank - i - 1 + nranks) % nranks;
-    size_t sslice = (rank - i + nranks) % nranks;
-
-    // Send slice to the right
-    NCCLCHECK(bootstrapNetSend(&state->ringSendSocket, data+sslice*size, size));
-    // Recv slice from the left
-    NCCLCHECK(bootstrapNetRecv(&state->ringRecvSocket, data+rslice*size, size));
+  if (rank == 0) {
+    NCCLCHECK(ncclSocketSend(&state->ringSendSocket, data, size));
+    NCCLCHECK(ncclSocketRecv(&state->ringRecvSocket, data + size, (nranks - 1) * size));
+    NCCLCHECK(ncclSocketSend(&state->ringSendSocket, data + 2 *size, (nranks -2) * size));
+  } else if (rank < nranks - 1) {
+    NCCLCHECK(ncclSocketRecv(&state->ringRecvSocket, data, rank * size));
+    NCCLCHECK(ncclSocketSend(&state->ringSendSocket, data, (rank + 1) * size));
+    NCCLCHECK(ncclSocketRecv(&state->ringRecvSocket, data + (rank + 1) * size, (nranks - rank - 1) * size));
+    if (rank < nranks - 2) {
+      NCCLCHECK(ncclSocketSend(&state->ringSendSocket, data + (rank + 2) *size, (nranks - rank - 2) * size));
+    }
+  } else {
+    assert(rank == nranks - 1);
+    NCCLCHECK(ncclSocketRecv(&state->ringRecvSocket, data, rank * size));
+    NCCLCHECK(ncclSocketSend(&state->ringSendSocket, data + size, rank * size));
   }
 
   TRACE(NCCL_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
