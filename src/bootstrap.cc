@@ -288,63 +288,41 @@ enum bootstrapSocketType {
   bootstrapRingRecvSocket,
 };
 
-int findFirstHost(const char **hostList, int nranks, const char *host) {
-  for (int r=0; r < nranks; ++r) {
-    if (strcmp(hostList[r], host) == 0)
-      return r;
-  }
+double dbtime();
 
-  return -1;
-}
-
-ncclResult_t bootstrapGetListenSocketAddress(struct ncclComm *comm, int rank, ncclSocketAddress *sockAddr) {
-  assert(comm->config.hostList);
-
-  int hostHeadRank = findFirstHost(comm->config.hostList, comm->nRanks, comm->config.hostList[rank]);
-  if (hostHeadRank == -1)
-    return ncclInvalidArgument;
-
-  int port = comm->config.portBase + (rank - hostHeadRank);
-
-  struct addrinfo *addrInfo;
-  if (getaddrinfo(comm->config.hostList[rank], NULL, NULL, &addrInfo)!=0) {
-    return ncclInvalidArgument;
-  }
-
-  memcpy(&sockAddr->sa, addrInfo->ai_addr, addrInfo->ai_addrlen);
-
-  ncclResult_t ret = ncclSuccess;
-  if (addrInfo->ai_family == AF_INET) {
-    sockAddr->sin.sin_port = htons(port);
-  } else if (addrInfo->ai_family == AF_INET6) {
-    sockAddr->sin6.sin6_port = htons(port);
-  } else {
-    ret = ncclInvalidArgument;
-  }
-
-  freeaddrinfo(addrInfo);
-  return ret;
-}
-
-ncclResult_t bootstrapInitSocketsFromHostList(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
+ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle, struct ncclComm* comm, struct bootstrapState* state)
 {
-  // deduce the lisening socket address of all ranks from hostList and portBase
+  assert(comm->config.connData);
+
+  static int printed = 0;
+  if (!printed) {
+    fprintf(stderr, "bootstrapping using host list\n");
+    printed = 1;
+  }
+
+  double t0 = dbtime();
+  // deduce the lisening socket address of all ranks from connData
   NCCLCHECK(ncclCalloc(&state->peerCommAddresses, comm->nRanks));
   for (int r=0; r < comm->nRanks; ++r) {
-    bootstrapGetListenSocketAddress(comm, r, &state->peerCommAddresses[r]);
+    memcpy(&state->peerCommAddresses[r].sa, comm->config.connData[r], sizeof(struct sockaddr));
   }
 
+  double t1 = dbtime();
   // create my lisening socket so that others can contact me
   NCCLCHECK(ncclSocketInit(&state->listenSock, &state->peerCommAddresses[comm->rank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketListen(&state->listenSock));
 
+  double t2 = dbtime();
   int nextRank = (comm->rank + 1) % comm->nRanks;
   NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
 
+  double t3 = dbtime();
   // accept connection from my "prev" rank in the ring
   NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
   NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
+  double t4 = dbtime();
+  fprintf(stderr, "\t\tbootstrapInitSocketsFromConnData. total: %f part1: %f part2: %f part3: %f part4: %f\n", t4 - t0, t1 - t0, t2 - t1, t3 - t2, t4 - t3);
   return ncclSuccess;
 }
 
@@ -363,8 +341,8 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
 
   TRACE(NCCL_INIT, "rank %d nranks %d", rank, nranks);
 
-  if (comm->config.hostList) {
-    NCCLCHECK(bootstrapInitSocketsFromHostList(handle, comm, state));
+  if (comm->config.connData) {
+    NCCLCHECK(bootstrapInitSocketsFromConnData(handle, comm, state));
   } else {
     NCCLCHECK(bootstrapInitSocketsFromRoot(handle, comm, state));
   }

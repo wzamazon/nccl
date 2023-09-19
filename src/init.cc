@@ -1569,8 +1569,7 @@ static ncclResult_t parseCommConfig(ncclComm_t comm, ncclConfig_t *config) {
   comm->config.maxCTAs = internalConfigPtr->maxCTAs;
   comm->config.netName = internalConfigPtr->netName;
   comm->config.splitShare = internalConfigPtr->splitShare;
-  comm->config.hostList = internalConfigPtr->hostList;
-  comm->config.portBase = internalConfigPtr->portBase;
+  comm->config.connData = internalConfigPtr->connData;
 
   NCCLCHECKGOTO(envConfigOverride(comm), ret, fail);
 
