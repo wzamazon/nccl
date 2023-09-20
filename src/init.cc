@@ -795,14 +795,15 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   int* pxnPeers = NULL;
   int *topParentLocalRanks = NULL;
   int tpProxyRank;
-  double bgntime;
+  double bgntime, endtime;
 
   // AllGather1 - begin
   NCCLCHECKGOTO(ncclCalloc(&comm->peerInfo, nranks+1), ret, fail); // Extra rank to represent CollNet root
   NCCLCHECKGOTO(fillInfo(comm, comm->peerInfo+rank, comm->commHash), ret, fail);
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, comm->peerInfo, sizeof(struct ncclPeerInfo)), ret, fail);
-  fprintf(stderr, "\t\tAllGather1st\tcalled: %f elapsed: %f blocksize: %lu\n", bgntime, dbtime() - bgntime, sizeof(struct ncclPeerInfo));
+  endtime = dbtime();
+  fprintf(stderr, "\t\tAllGather1st\tcalled: %f elapsed: %f end: %f blocksize: %lu\n", bgntime, endtime - bgntime, endtime, sizeof(struct ncclPeerInfo));
 
   for (int i = 0; i < nranks; i++) {
     if ((i != rank) && (comm->peerInfo[i].hostHash == comm->peerInfo[rank].hostHash) && (comm->peerInfo[i].busId == comm->peerInfo[rank].busId)) {
@@ -871,6 +872,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     sched_setaffinity(0, sizeof(cpu_set_t), &comm->cpuAffinity);
   }
 
+
   // Determine local CollNet support
   if (collNetSupport(comm)) {
     char *collNetEnable = getenv("NCCL_COLLNET_ENABLE");
@@ -885,13 +887,19 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   // Determine local Nvls support
   NCCLCHECK(ncclNvlsInit(comm));
 
+
   // Get rings and trees
   ringGraph.id = 0;
   ringGraph.pattern = NCCL_TOPO_PATTERN_RING;
   ringGraph.collNet = 0;
   ringGraph.minChannels = 1;
   ringGraph.maxChannels = MAXCHANNELS/2;
+
+  bgntime = dbtime();
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, &ringGraph), ret, fail);
+  endtime = dbtime();
+  fprintf(stderr, "\t\ttopoCompRing.\tcalled: %f elapsed: %f end: %f\n", bgntime, endtime - bgntime, endtime);
+
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, &ringGraph), ret, fail);
 
   treeGraph.id = 1;
@@ -899,7 +907,11 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   treeGraph.collNet = 0;
   treeGraph.minChannels = ringGraph.nChannels;
   treeGraph.maxChannels = ringGraph.nChannels;
+  bgntime = dbtime();
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, &treeGraph), ret, fail);
+  endtime = dbtime();
+  fprintf(stderr, "\t\ttopoCompTree.\tcalled: %f elapsed: %f end: %f\n", bgntime, endtime - bgntime, endtime);
+
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, &treeGraph), ret, fail);
 
   collNetGraph.id = 2;
@@ -951,7 +963,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, allGather3Data, sizeof(*allGather3Data)), ret, fail);
-  fprintf(stderr, "\t\tAllGather2nd\tcalled: %f elapsed: %f blocksize: %lu\n", bgntime, dbtime() - bgntime, sizeof(*allGather3Data));
+  endtime = dbtime();
+  fprintf(stderr, "\t\tAllGather2nd\tcalled: %f elapsed: %f end: %f blocksize: %lu\n", bgntime, endtime - bgntime, endtime, sizeof(*allGather3Data));
 
   // Determine nNodes, firstRanks, ...
   NCCLCHECKGOTO(ncclCalloc(&nodesFirstRank, nranks), ret, fail);
