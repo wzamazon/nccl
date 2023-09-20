@@ -65,6 +65,8 @@ void dumpData(struct ncclConnect* data, int ndata) {
   }
 }
 
+double dbtime();
+
 ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, int connIndex, int* highestTransportType/*=NULL*/) {
   // Stream used during transport setup; need for P2P pre-connect + CUDA Graph
   ncclResult_t ret = ncclSuccess;
@@ -72,8 +74,10 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
   struct ncclConnect** data = (ncclConnect**) malloc(sizeof(ncclConnect*) * comm->nRanks); // Store intermediate send/recvData structs for connect
   struct ncclConnect** recvData = (ncclConnect**) malloc(sizeof(ncclConnect*) * comm->nRanks); // Points to entries inside data for given recv connection within a channel
   struct ncclConnect** sendData = (ncclConnect**) malloc(sizeof(ncclConnect*) * comm->nRanks); // Points to entries inside data for given send connection within a channel
+  double bgntime, endtime;
 
   NCCLCHECKGOTO(ncclStrongStreamAcquireUncaptured(&comm->sharedRes->hostStream), ret, fail);
+  bgntime = dbtime();
   // First time initialization
   for (int i=1; i<comm->nRanks; i++) {
     int bootstrapTag = (i<<8) + (graph ? graph->id+1 : 0);
@@ -125,7 +129,10 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
     }
     TIME_STOP(2);
   }
+  endtime = dbtime();
+  fprintf(stderr, "\t\txchConnData.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
 
+  bgntime = dbtime();
   // Loop until all channels with all ranks have been connected
   bool allChannelsConnected;
   allChannelsConnected = false;
@@ -181,6 +188,8 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
       }
     }
   }
+  endtime = dbtime();
+  fprintf(stderr, "\t\tpluginConnect.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
 
   // Clear all connect masks and free each connectInfo array
   for (int i=1; i<comm->nRanks; i++) {
