@@ -9,6 +9,7 @@
 #include "utils.h"
 #include "bootstrap.h"
 #include "net.h"
+#include <vector>
 #include <unistd.h>
 #include <sys/types.h>
 #include "proxy.h"
@@ -94,18 +95,25 @@ static ncclResult_t setFilesLimit() {
   return ncclSuccess;
 }
 
+struct boostrapClientState {
+  boostrapClientState() {
+    this->received = 0;
+  }
+
+  int received;
+  struct ncclSocket sock;
+  union ncclSocketAddress addr;
+};
+
 static void *bootstrapRoot(void* rargs) {
   struct bootstrapRootArgs* args = (struct bootstrapRootArgs*)rargs;
   struct ncclSocket* listenSock = args->listenSock;
-  uint64_t magic = args->magic;
   ncclResult_t res = ncclSuccess;
-  int nranks = 0, c = 0;
+  int nranks = 0, c = 0, nsent = 0;
   struct extInfo info;
-  union ncclSocketAddress *rankAddresses = NULL;
-  union ncclSocketAddress *rankAddressesRoot = NULL; // for initial rank <-> root information exchange
-  union ncclSocketAddress *zero = NULL;
-  NCCLCHECKGOTO(ncclCalloc(&zero, 1), res, out);
   setFilesLimit();
+
+  std::vector<struct boostrapClientState> clients(4096);
 
   TRACE(NCCL_INIT, "BEGIN");
   /* Receive addresses from all ranks */
@@ -114,52 +122,42 @@ static void *bootstrapRoot(void* rargs) {
     NCCLCHECKGOTO(ncclSocketInit(&sock), res, out);
     NCCLCHECKGOTO(ncclSocketAccept(&sock, listenSock), res, out);
     NCCLCHECKGOTO(bootstrapNetRecv(&sock, &info, sizeof(info)), res, out);
-    NCCLCHECKGOTO(ncclSocketClose(&sock), res, out);
 
     if (c == 0) {
       nranks = info.nranks;
-      NCCLCHECKGOTO(ncclCalloc(&rankAddresses, nranks), res, out);
-      NCCLCHECKGOTO(ncclCalloc(&rankAddressesRoot, nranks), res, out);
-    }
-
-    if (nranks != info.nranks) {
+      clients.resize(nranks);
+    } else if (nranks != info.nranks) {
       WARN("Bootstrap Root : mismatch in rank count from procs %d : %d", nranks, info.nranks);
       goto out;
     }
 
-    if (memcmp(zero, &rankAddressesRoot[info.rank], sizeof(union ncclSocketAddress)) != 0) {
-      WARN("Bootstrap Root : rank %d of %d ranks has already checked in", info.rank, nranks);
-      goto out;
+    memcpy(&clients[info.rank].sock, &sock, sizeof(sock));
+    memcpy(&clients[info.rank].addr, &info.extAddressListen, sizeof(union ncclSocketAddress));
+    clients[info.rank].received = 1;
+    int prev = (nranks + info.rank - 1 ) % nranks;
+    if (clients[prev].received) {
+      NCCLCHECKGOTO(bootstrapNetSend(&clients[prev].sock, &clients[info.rank].addr, sizeof(union ncclSocketAddress)), res, out);
+      NCCLCHECKGOTO(ncclSocketClose(&clients[prev].sock), res, out);
+      nsent += 1;
     }
 
-    // Save the connection handle for that rank
-    memcpy(rankAddressesRoot+info.rank, &info.extAddressListenRoot, sizeof(union ncclSocketAddress));
-    memcpy(rankAddresses+info.rank, &info.extAddressListen, sizeof(union ncclSocketAddress));
+    int next = (info.rank + 1) % nranks;
+    if (clients[next].received) {
+      NCCLCHECKGOTO(bootstrapNetSend(&clients[info.rank].sock, &clients[next].addr, sizeof(union ncclSocketAddress)), res, out);
+      NCCLCHECKGOTO(ncclSocketClose(&clients[info.rank].sock), res, out);
+      nsent += 1;
+    }
 
     ++c;
     TRACE(NCCL_INIT, "Received connect from rank %d total %d/%d",  info.rank, c, nranks);
   } while (c < nranks);
   TRACE(NCCL_INIT, "COLLECTED ALL %d HANDLES", nranks);
-
-  // Send the connect handle for the next rank in the AllGather ring
-  for (int r=0; r<nranks; ++r) {
-    int next = (r+1) % nranks;
-    struct ncclSocket sock;
-    NCCLCHECKGOTO(ncclSocketInit(&sock, rankAddressesRoot+r, magic, ncclSocketTypeBootstrap), res, out);
-    NCCLCHECKGOTO(ncclSocketConnect(&sock), res, out);
-    NCCLCHECKGOTO(bootstrapNetSend(&sock, rankAddresses+next, sizeof(union ncclSocketAddress)), res, out);
-    NCCLCHECKGOTO(ncclSocketClose(&sock), res, out);
-  }
-  TRACE(NCCL_INIT, "SENT OUT ALL %d HANDLES", nranks);
-
+  fprintf(stderr, "received %d sent %d\n", c, nsent);
 out:
   if (listenSock != NULL) {
     ncclSocketClose(listenSock);
     free(listenSock);
   }
-  if (rankAddresses) free(rankAddresses);
-  if (rankAddressesRoot) free(rankAddressesRoot);
-  if (zero) free(zero);
   free(rargs);
 
   TRACE(NCCL_INIT, "DONE");
@@ -231,7 +229,7 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   struct bootstrapState* state;
   struct ncclSocket* proxySocket;
   ncclSocketAddress nextAddr;
-  struct ncclSocket sock, listenSockRoot;
+  struct ncclSocket sock;
   struct extInfo info = { 0 };
 
   NCCLCHECK(ncclCalloc(&state, 1));
@@ -250,10 +248,9 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   NCCLCHECK(ncclSocketListen(&state->listenSock));
   NCCLCHECK(ncclSocketGetAddr(&state->listenSock, &info.extAddressListen));
 
-  // Create socket for root to contact me
-  NCCLCHECK(ncclSocketInit(&listenSockRoot, &bootstrapNetIfAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
-  NCCLCHECK(ncclSocketListen(&listenSockRoot));
-  NCCLCHECK(ncclSocketGetAddr(&listenSockRoot, &info.extAddressListenRoot));
+  double bgntime, endtime;
+
+  bgntime = dbtime();
 
   // stagger connection times to avoid an overload of the root
   if (nranks > 128) {
@@ -269,14 +266,13 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   NCCLCHECK(ncclSocketInit(&sock, &handle->addr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
   NCCLCHECK(ncclSocketConnect(&sock));
   NCCLCHECK(bootstrapNetSend(&sock, &info, sizeof(info)));
-  NCCLCHECK(ncclSocketClose(&sock));
 
   // get info on my "next" rank in the bootstrap ring from root
-  NCCLCHECK(ncclSocketInit(&sock));
-  NCCLCHECK(ncclSocketAccept(&sock, &listenSockRoot));
   NCCLCHECK(bootstrapNetRecv(&sock, &nextAddr, sizeof(union ncclSocketAddress)));
   NCCLCHECK(ncclSocketClose(&sock));
-  NCCLCHECK(ncclSocketClose(&listenSockRoot));
+  endtime = dbtime();
+  fprintf(stderr, "\t\t\tserver_comm. comm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n",
+	  comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
 
   NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &nextAddr, comm->magic, ncclSocketTypeBootstrap, comm->abortFlag));
   NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
