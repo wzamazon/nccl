@@ -16,6 +16,10 @@
 #include <netdb.h>
 #include "proxy.h"
 
+double dbtime();
+
+void printEvent(ncclComm_t comm, const char* title, double bgntime, double endtime);
+
 struct bootstrapRootArgs {
   struct ncclSocket* listenSock;
   uint64_t magic;
@@ -322,9 +326,15 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   TRACE(NCCL_INIT, "rank %d nranks %d", rank, nranks);
 
   if (comm->config.connData) {
+    double bgntime = dbtime();
     NCCLCHECK(bootstrapInitSocketsFromConnData(handle, comm, state));
+    double endtime = dbtime();
+    printEvent(comm, "        socketFromConnData", bgntime, endtime);
   } else {
+    double bgntime = dbtime();
     NCCLCHECK(bootstrapInitSocketsFromRoot(handle, comm, state));
+    double endtime = dbtime();
+    printEvent(comm, "        socketFromRoot", bgntime, endtime);
   }
 
   // Create the service proxy
