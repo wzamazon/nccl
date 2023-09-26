@@ -293,28 +293,18 @@ ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle
     memcpy(&state->peerCommAddresses[r].sa, comm->config.connData[r], sizeof(struct sockaddr));
   }
 
-  char addrstr[1024];
-
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. lisent on %s\n", getpid(), ncclSocketToString(&state->peerCommAddresses[comm->rank], addrstr));
   // create my lisening socket so that others can contact me
   NCCLCHECK(ncclSocketInit(&state->listenSock, &state->peerCommAddresses[comm->rank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketListen(&state->listenSock));
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. lisent done.\n", getpid());
-
 
   // connect to the socket of my "next" rank in the ring
   int nextRank = (comm->rank + 1) % comm->nRanks;
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. connect to %s\n", getpid(), ncclSocketToString(&state->peerCommAddresses[nextRank], addrstr));
   NCCLCHECK(ncclSocketInit(&state->ringSendSocket, &state->peerCommAddresses[nextRank], comm->magic, ncclSocketTypeBootstrap, NULL));
   NCCLCHECK(ncclSocketConnect(&state->ringSendSocket));
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. connect done\n", getpid());
 
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. accept connection ....\n", getpid());
   // accept connection from my "prev" rank in the ring
   NCCLCHECK(ncclSocketInit(&state->ringRecvSocket));
   NCCLCHECK(ncclSocketAccept(&state->ringRecvSocket, &state->listenSock));
-  fprintf(stderr, "%d:\t\t\tInitSocketsFromConnData. accept connection done\n", getpid());
-
   return ncclSuccess;
 }
 
@@ -439,15 +429,10 @@ ncclResult_t bootstrapAllGather(void* commState, void* allData, int size) {
     size_t rslice = (rank - i - 1 + nranks) % nranks;
     size_t sslice = (rank - i + nranks) % nranks;
 
-    char addrstr[1024];
     // Send slice to the right
-    fprintf(stderr, "%d: in allgather, sending data to %s ....\n", getpid(), ncclSocketToString(&state->ringSendSocket.addr, addrstr));
     NCCLCHECK(bootstrapNetSend(&state->ringSendSocket, data+sslice*size, size));
-    fprintf(stderr, "%d: in allgather, sending data to %s done\n", getpid(), ncclSocketToString(&state->ringSendSocket.addr, addrstr));
     // Recv slice from the left
-    fprintf(stderr, "%d: in allgather, recving data from %s ....\n", getpid(), ncclSocketToString(&state->ringRecvSocket.addr, addrstr));
     NCCLCHECK(bootstrapNetRecv(&state->ringRecvSocket, data+rslice*size, size));
-    fprintf(stderr, "%d: in allgather, recving data from %s done\n", getpid(), ncclSocketToString(&state->ringRecvSocket.addr, addrstr));
   }
 
   TRACE(NCCL_INIT, "rank %d nranks %d size %d - DONE", rank, nranks, size);
