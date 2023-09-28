@@ -66,6 +66,7 @@ void dumpData(struct ncclConnect* data, int ndata) {
 }
 
 double dbtime();
+void printEvent(ncclComm_t comm, const char* title, double bgntime, double endtime);
 
 ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, int connIndex, int* highestTransportType/*=NULL*/) {
   // Stream used during transport setup; need for P2P pre-connect + CUDA Graph
@@ -130,7 +131,7 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
     TIME_STOP(2);
   }
   endtime = dbtime();
-  fprintf(stderr, "\t\txchConnData.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    xchConnData", bgntime, endtime);
 
   bgntime = dbtime();
   // Loop until all channels with all ranks have been connected
@@ -189,7 +190,7 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
     }
   }
   endtime = dbtime();
-  fprintf(stderr, "\t\tpluginConnect.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    pluginConnect", bgntime, endtime);
 
   // Clear all connect masks and free each connectInfo array
   for (int i=1; i<comm->nRanks; i++) {
