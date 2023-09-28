@@ -42,6 +42,12 @@ double dbtime()
     return tv.tv_sec  + tv.tv_usec * 1e-6;
 }
 
+void printEvent(ncclComm_t comm, const char* title, double bgntime, double endtime)
+{
+  fprintf(stderr, "%8d: %-40s comm: %p rank: %4d nranks: %4d called: %f completed: %f elapsed: %f\n",
+	  getpid(), title, comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+}
+
 const char* ncclFuncStr[NCCL_NUM_FUNCTIONS] = { "Broadcast", "Reduce", "AllGather", "ReduceScatter", "AllReduce" };
 const char* ncclAlgoStr[NCCL_NUM_ALGORITHMS] = { "Tree", "Ring", "CollNetDirect", "CollNetChain", "NVLS", "NVLSTree" };
 const char* ncclProtoStr[NCCL_NUM_PROTOCOLS] = { "LL", "LL128", "Simple" };
@@ -800,7 +806,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, comm->peerInfo, sizeof(struct ncclPeerInfo)), ret, fail);
   endtime = dbtime();
-  fprintf(stderr, "\t\tAllGather1st\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    AllGather1st", bgntime, endtime);
 
   for (int i = 0; i < nranks; i++) {
     if ((i != rank) && (comm->peerInfo[i].hostHash == comm->peerInfo[rank].hostHash) && (comm->peerInfo[i].busId == comm->peerInfo[rank].busId)) {
@@ -893,7 +899,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   bgntime = dbtime();
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, &ringGraph), ret, fail);
   endtime = dbtime();
-  fprintf(stderr, "\t\ttopoCompRing.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    topoCompRing", bgntime, endtime);
 
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, &ringGraph), ret, fail);
 
@@ -905,7 +911,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   bgntime = dbtime();
   NCCLCHECKGOTO(ncclTopoCompute(comm->topo, &treeGraph), ret, fail);
   endtime = dbtime();
-  fprintf(stderr, "\t\ttopoCompTree.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    topoCompTree", bgntime, endtime);
 
   NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, &treeGraph), ret, fail);
 
@@ -959,7 +965,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   bgntime = dbtime();
   NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, allGather3Data, sizeof(*allGather3Data)), ret, fail);
   endtime = dbtime();
-  fprintf(stderr, "\t\tAllGather2nd\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    AllGather2nd", bgntime, endtime);
 
   // Determine nNodes, firstRanks, ...
   NCCLCHECKGOTO(ncclCalloc(&nodesFirstRank, nranks), ret, fail);
@@ -1378,7 +1384,7 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
     initbgntime = dbtime();
     NCCLCHECKGOTO(bootstrapInit((struct ncclBootstrapHandle*)&job->commId, comm), res, fail);
     initendtime = dbtime();
-    fprintf(stderr, "\t\tbootstrapInit.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, initbgntime, initendtime, initendtime - initbgntime);
+    printEvent(comm, "    bootstrapInit", initbgntime, initendtime);
   }
 
   comm->cudaArch = cudaArch;
@@ -1412,7 +1418,7 @@ exit:
   free(parentRanks);
 
   endtime = dbtime();
-  fprintf(stderr, "\tcommInitRank.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n",comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "commInitRank", bgntime, endtime);
   return res;
 fail:
   comm->initState = res;
@@ -1660,7 +1666,6 @@ ncclResult_t ncclCommInitRank(ncclComm_t* newcomm, int nranks, ncclUniqueId comm
   // Load the CUDA driver and dlsym hooks (can fail on old drivers)
   (void)ncclCudaLibraryInit();
 
-  fprintf(stderr, "\tncclCommInitRank\tcalled: %f\n", dbtime());
   int cudaDev;
   ncclConfig_t config = NCCL_CONFIG_INITIALIZER;
   CUDACHECK(cudaGetDevice(&cudaDev));
@@ -1742,6 +1747,7 @@ ncclResult_t ncclCommSetAsyncError(ncclComm_t comm, ncclResult_t nextState) {
 
 NCCL_API(ncclResult_t, ncclCommInitRankConfig, ncclComm_t* comm, int nranks, ncclUniqueId commId, int myrank, ncclConfig_t *config);
 ncclResult_t ncclCommInitRankConfig(ncclComm_t *newcomm, int nranks, ncclUniqueId commId, int myrank, ncclConfig_t *config) {
+  fprintf(stderr, "%d: Enter ncclCommInitRankConfig\tcomm: NULL rank: %d nranks: %d called: %f\n", getpid(), myrank, nranks, dbtime());
   NVTX3_FUNC_RANGE_IN(nccl_domain);
   int cudaDev;
   ncclResult_t ret = ncclSuccess;
