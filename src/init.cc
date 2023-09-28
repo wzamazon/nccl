@@ -1353,15 +1353,20 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
   int cudaDev = job->cudaDev;
   int* parentRanks = NULL;
   int cudaArch;
-  double bgntime, endtime;
+  double overallBgntime, overallEndtime;
+  double kernelInitBgntime, kernelInitEndtime;
 
-  bgntime = dbtime();
+  overallBgntime = dbtime();
   CUDACHECKGOTO(cudaSetDevice(cudaDev), res, fail);
   CUDACHECKGOTO(cudaDeviceGetAttribute(&archMajor, cudaDevAttrComputeCapabilityMajor, cudaDev), res, fail);
   CUDACHECKGOTO(cudaDeviceGetAttribute(&archMinor, cudaDevAttrComputeCapabilityMinor, cudaDev), res, fail);
   cudaArch = 100*archMajor + 10*archMinor;
 
+  kernelInitBgntime = dbtime();
   NCCLCHECK(ncclInitKernelsForDevice(cudaArch, &maxLocalSizeBytes));
+  kernelInitEndtime = dbtime();
+  printEvent(comm, "    kernelInitForDevice", kernelInitBgntime, kernelInitEndtime);
+
   // Set the maximum kernel stack size of all kernels to avoid
   // a CUDA memory reconfig on load (c.f. NVSHMEM issue)
   if (maxLocalSizeBytes > 0 && ncclParamSetStackSize() == 1) {
@@ -1408,8 +1413,8 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
                 comm, comm->nRanks, (unsigned long long)hashUniqueId(job->commId), comm->rank, comm->cudaDev);
   }
 
-  endtime = dbtime();
-  INFO(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d nvmlDev %d busId %lx commId 0x%llx - Init Began at %f Completed at %f Elpased %f s", comm, comm->rank, comm->nRanks, comm->cudaDev, comm->nvmlDev, comm->busId, (unsigned long long)hashUniqueId(job->commId), bgntime, endtime, endtime - bgntime);
+  overallEndtime = dbtime();
+  INFO(NCCL_INIT,"comm %p rank %d nranks %d cudaDev %d nvmlDev %d busId %lx commId 0x%llx - Init Began at %f Completed at %f Elpased %f s", comm, comm->rank, comm->nRanks, comm->cudaDev, comm->nvmlDev, comm->busId, (unsigned long long)hashUniqueId(job->commId), overallBgntime, overallEndtime, overallEndtime - overallBgntime);
 exit:
   if (job->newcomm) {
     /* assign it to user pointer. */
@@ -1417,8 +1422,8 @@ exit:
   }
   free(parentRanks);
 
-  endtime = dbtime();
-  printEvent(comm, "commInitRank", bgntime, endtime);
+  overallEndtime = dbtime();
+  printEvent(comm, "commInitRank", overallBgntime, overallEndtime);
   return res;
 fail:
   comm->initState = res;
