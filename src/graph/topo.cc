@@ -593,6 +593,8 @@ static ncclResult_t xmlInitAttrFloat(struct ncclXmlNode* node, const char* attrN
 
 double dbtime();
 
+void printEvent(ncclComm_t comm, const char* title, double bgntime, double endtime);
+
 ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** system) {
   struct ncclXml* xml;
   NCCLCHECK(ncclCalloc(&xml, 1));
@@ -626,7 +628,7 @@ ncclResult_t ncclTopoGetSystem(struct ncclComm* comm, struct ncclTopoSystem** sy
     }
   }
   double endtime = dbtime();
-  fprintf(stderr, "\t\ttopoFillGpu.\tcomm: %p rank: %d nranks: %d called: %f completed: %f elapsed: %f\n", comm, comm->rank, comm->nRanks, bgntime, endtime, endtime - bgntime);
+  printEvent(comm, "    topoFillGpu", bgntime, endtime);
   // Auto-detect NICs if needed. net/collnet share the same xml/graph nodes,
   // so we start with collnet so that it has precedence.
   int netDevCount = 0;
