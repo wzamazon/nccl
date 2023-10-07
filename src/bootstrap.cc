@@ -223,6 +223,8 @@ struct bootstrapState {
   volatile uint32_t *abortFlag;
 };
 
+double dbtime();
+
 ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* comm) {
   int rank = comm->rank;
   int nranks = comm->nRanks;
@@ -253,7 +255,7 @@ ncclResult_t bootstrapInit(struct ncclBootstrapHandle* handle, struct ncclComm* 
   bgntime = dbtime();
 
   // stagger connection times to avoid an overload of the root
-  if (nranks > 128) {
+  if (nranks > 1280) {
     long msec = rank;
     struct timespec tv;
     tv.tv_sec = msec / 1000;
