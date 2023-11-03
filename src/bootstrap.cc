@@ -292,7 +292,7 @@ ncclResult_t bootstrapInitSocketsFromConnData(struct ncclBootstrapHandle* handle
   // deduce the lisening socket address of all ranks from connData
   NCCLCHECK(ncclCalloc(&state->peerCommAddresses, comm->nRanks));
   for (int r=0; r < comm->nRanks; ++r) {
-    memcpy(&state->peerCommAddresses[r].sa, comm->config.connData[r], sizeof(struct sockaddr));
+    memcpy(&state->peerCommAddresses[r].sa, comm->config.connData[r], sizeof(union ncclSocketAddress));
   }
 
   // create my lisening socket so that others can contact me
