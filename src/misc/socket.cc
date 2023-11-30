@@ -355,6 +355,33 @@ int ncclFindInterfaces(char* ifNames, union ncclSocketAddress *ifAddrs, int ifNa
   return nIfs;
 }
 
+int socketTrybind(int sockfd, union ncclSocketAddress *sockAddr, socklen_t addrlen)
+{
+  int maxtry = 5;
+  int sleep_time = 5;
+  char addrstr[4096];
+
+  ncclSocketToString(sockAddr, addrstr);
+
+  INFO(NCCL_NET, "Try to bind to address %s ....", addrstr);
+
+  for (int itry=0; itry < maxtry; ++itry) {
+       int ret = bind(sockfd, &(sockAddr->sa), addrlen);
+       if (ret == 0) {
+           return 0;
+       }
+
+       WARN("Attemp No. %d to bind to address %s failed. errno: %d. Retry after: %d seconds\n",
+            itry + 1, addrstr, errno, sleep_time);
+       sleep(sleep_time);
+       sleep_time *= 2;
+  }
+
+  WARN("All %d attempts to bind to address %s failed", maxtry, addrstr);
+  return -1;
+}
+
+
 ncclResult_t ncclSocketListen(struct ncclSocket* sock) {
   if (sock == NULL) {
     WARN("ncclSocketListen: pass NULL socket");
@@ -376,7 +403,7 @@ ncclResult_t ncclSocketListen(struct ncclSocket* sock) {
   }
 
   // addr port should be 0 (Any port)
-  SYSCHECK(bind(sock->fd, &sock->addr.sa, sock->salen), "bind");
+  SYSCHECK(socketTrybind(sock->fd, &sock->addr, sock->salen), "bind");
 
   /* Get the assigned Port */
   socklen_t size = sock->salen;
