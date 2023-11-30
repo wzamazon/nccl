@@ -363,21 +363,22 @@ int socketTrybind(int sockfd, union ncclSocketAddress *sockAddr, socklen_t addrl
 
   ncclSocketToString(sockAddr, addrstr);
 
-  INFO(NCCL_NET, "Try to bind to address %s ....", addrstr);
+  fprintf(stderr, "NcclInit %d: Try to bind to address %s ....\n", getpid(), addrstr);
 
   for (int itry=0; itry < maxtry; ++itry) {
        int ret = bind(sockfd, &(sockAddr->sa), addrlen);
        if (ret == 0) {
+           fprintf(stderr, "NcclInit %d: bind to address %s succeeded\n", getpid(), addrstr);
            return 0;
        }
 
-       WARN("Attemp No. %d to bind to address %s failed. errno: %d. Retry after: %d seconds\n",
-            itry + 1, addrstr, errno, sleep_time);
+       fprintf(stderr, "NcclInit %d: Attemp No. %d to bind to address %s failed. errno: %d. Retry after: %d seconds\n",
+               getpid(), itry + 1, addrstr, errno, sleep_time);
        sleep(sleep_time);
        sleep_time *= 2;
   }
 
-  WARN("All %d attempts to bind to address %s failed", maxtry, addrstr);
+  fprintf(stderr, "NcclInit %d: All %d attempts to bind to address %s failed", getpid(), maxtry, addrstr);
   return -1;
 }
 
